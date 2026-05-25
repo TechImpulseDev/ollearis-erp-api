@@ -31,7 +31,7 @@ try {
 		));
 		sendJson(400, array(
 			'error' => true,
-			'message' => 'No hay pares Pn/Vn validos.',
+			'message' => 'No hay parametros validos.',
 			'request_id' => $requestId
 		));
 	}
@@ -137,6 +137,14 @@ function extractDynamicPairs($queryParams)
 		$normalized[strtoupper((string)$key)] = $value;
 	}
 
+	$hasExplicitValues = false;
+	foreach ($normalized as $key => $value) {
+		if (preg_match('/^V\d+$/', $key)) {
+			$hasExplicitValues = true;
+			break;
+		}
+	}
+
 	$pairIndexes = array();
 	foreach ($normalized as $key => $value) {
 		if (preg_match('/^P(\d+)$/', $key, $matches)) {
@@ -149,6 +157,19 @@ function extractDynamicPairs($queryParams)
 	$pairs = array();
 	foreach ($pairIndexes as $index => $idParamValue) {
 		$valueKey = 'V' . $index;
+
+		if (!$hasExplicitValues) {
+			if ($idParamValue === '') {
+				continue;
+			}
+
+			$pairs[] = array(
+				'id_param' => $index,
+				'valor' => $idParamValue
+			);
+			continue;
+		}
+
 		if (!array_key_exists($valueKey, $normalized)) {
 			continue;
 		}
