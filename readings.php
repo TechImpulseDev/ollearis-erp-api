@@ -4,22 +4,35 @@ date_default_timezone_set('Europe/Madrid');
 
 header('Content-Type: application/json; charset=utf-8');
 
+$requestId = createRequestId();
+
 try {
 	$request = getRequestData();
 	$mac = getStringValue($request, 'mac');
 	$pairs = extractDynamicPairs($request);
 
 	if ($mac === '') {
+		logMessage('warning', 'MAC no enviada.', array(
+			'request_id' => $requestId,
+			'method' => getRequestMethod()
+		));
 		sendJson(400, array(
 			'error' => true,
-			'message' => 'MAC no enviada.'
+			'message' => 'MAC no enviada.',
+			'request_id' => $requestId
 		));
 	}
 
 	if (count($pairs) === 0) {
+		logMessage('warning', 'No hay pares validos.', array(
+			'request_id' => $requestId,
+			'method' => getRequestMethod(),
+			'mac' => $mac
+		));
 		sendJson(400, array(
 			'error' => true,
-			'message' => 'No hay pares Pn/Vn validos.'
+			'message' => 'No hay pares Pn/Vn validos.',
+			'request_id' => $requestId
 		));
 	}
 
@@ -27,35 +40,59 @@ try {
 	sendJson(201, array(
 		'error' => false,
 		'message' => 'Lecturas insertadas correctamente.',
-		'inserted' => $result['inserted']
+		'inserted' => $result['inserted'],
+		'request_id' => $requestId
 	));
 } catch (InvalidArgumentException $e) {
+	logMessage('warning', $e->getMessage(), array(
+		'request_id' => $requestId,
+		'method' => getRequestMethod()
+	));
 	sendJson(400, array(
 		'error' => true,
-		'message' => $e->getMessage()
+		'message' => $e->getMessage(),
+		'request_id' => $requestId
 	));
 } catch (PDOException $e) {
-	error_log('[ollearisWs] Database error: ' . $e->getMessage());
+	logMessage('error', 'Database error.', array(
+		'request_id' => $requestId,
+		'exception' => $e->getMessage()
+	));
 	sendJson(500, array(
 		'error' => true,
-		'message' => 'Error de base de datos.'
+		'message' => 'Error de base de datos.',
+		'request_id' => $requestId
 	));
 } catch (RuntimeException $e) {
+	logMessage('warning', $e->getMessage(), array(
+		'request_id' => $requestId,
+		'method' => getRequestMethod()
+	));
 	sendJson(404, array(
 		'error' => true,
-		'message' => $e->getMessage()
+		'message' => $e->getMessage(),
+		'request_id' => $requestId
 	));
 } catch (Exception $e) {
-	error_log('[ollearisWs] Unexpected error: ' . $e->getMessage());
+	logMessage('error', 'Unexpected error.', array(
+		'request_id' => $requestId,
+		'exception' => $e->getMessage()
+	));
 	sendJson(500, array(
 		'error' => true,
-		'message' => 'Error interno.'
+		'message' => 'Error interno.',
+		'request_id' => $requestId
 	));
+}
+
+function getRequestMethod()
+{
+	return isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : 'GET';
 }
 
 function getRequestData()
 {
-	$method = isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : 'GET';
+	$method = getRequestMethod();
 
 	if ($method === 'POST') {
 		$contentType = isset($_SERVER['CONTENT_TYPE']) ? $_SERVER['CONTENT_TYPE'] : '';
@@ -204,4 +241,43 @@ function sendJson($statusCode, $payload)
 	http_response_code($statusCode);
 	echo json_encode($payload, JSON_UNESCAPED_UNICODE);
 	exit;
+}
+
+function createRequestId()
+{
+	if (function_exists('random_bytes')) {
+		return bin2hex(random_bytes(8));
+	}
+
+	return str_replace('.', '', uniqid('', true));
+}
+
+function logMessage($level, $message, $context)
+{
+	$logDir = __DIR__ . '/logs';
+	if (!is_dir($logDir) && !mkdir($logDir, 0775, true)) {
+		error_log('[readings] Cannot create log directory: ' . $logDir);
+		return;
+	}
+
+	$entry = array(
+		'timestamp' => date('c'),
+		'level' => strtoupper($level),
+		'message' => $message,
+		'context' => $context
+	);
+
+	$encoded = json_encode($entry, JSON_UNESCAPED_UNICODE);
+	if ($encoded === false) {
+		$encoded = json_encode(array(
+			'timestamp' => date('c'),
+			'level' => 'ERROR',
+			'message' => 'Unable to encode log entry.'
+		));
+	}
+
+	$logFile = $logDir . '/api-error.log';
+	if (file_put_contents($logFile, $encoded . PHP_EOL, FILE_APPEND | LOCK_EX) === false) {
+		error_log('[readings] Cannot write log file: ' . $logFile);
+	}
 }
