@@ -2,7 +2,15 @@
 
 date_default_timezone_set('Europe/Madrid');
 
+header('Access-Control-Allow-Origin: *');
+header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type');
 header('Content-Type: application/json; charset=utf-8');
+
+if (getRequestMethod() === 'OPTIONS') {
+	http_response_code(204);
+	exit;
+}
 
 $requestId = createRequestId();
 
@@ -198,15 +206,15 @@ function extractDynamicPairs($queryParams)
 
 function insertData($mac, $pairs)
 {
-	$connectionFile = __DIR__ . '/connection.php';
+	$connectionFile = dirname(__DIR__) . '/connection.php';
 	if (!is_file($connectionFile)) {
-		throw new Exception('Missing database configuration file.');
+		throw new Exception('Missing database configuration file: ' . $connectionFile);
 	}
 
 	require $connectionFile;
 
 	if (!isset($connection, $username, $password)) {
-		throw new Exception('Incomplete database configuration.');
+		throw new Exception('Incomplete database configuration in ' . $connectionFile . '.');
 	}
 
 	$con = new PDO($connection, $username, $password);
