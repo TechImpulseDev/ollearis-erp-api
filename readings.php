@@ -16,6 +16,10 @@ $requestId = createRequestId();
 
 try {
 	$request = getRequestData();
+	if (getRequestMethod() === 'GET') {
+		logIncomingGetRequest($requestId, $request);
+	}
+
 	$mac = getStringValue($request, 'mac');
 	$pairs = extractDynamicPairs($request);
 
@@ -279,6 +283,54 @@ function createRequestId()
 	}
 
 	return str_replace('.', '', uniqid('', true));
+}
+
+function logIncomingGetRequest($requestId, $queryParams)
+{
+	logMessage('info', 'Incoming GET request.', array(
+		'request_id' => $requestId,
+		'method' => getRequestMethod(),
+		'url' => getFullRequestUrl(),
+		'request_uri' => isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : '',
+		'query_string' => isset($_SERVER['QUERY_STRING']) ? $_SERVER['QUERY_STRING'] : '',
+		'query_params' => $queryParams,
+		'client_ip' => getClientIp(),
+		'user_agent' => isset($_SERVER['HTTP_USER_AGENT']) ? $_SERVER['HTTP_USER_AGENT'] : ''
+	));
+}
+
+function getFullRequestUrl()
+{
+	$scheme = 'http';
+	if (
+		(isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== '' && strtolower($_SERVER['HTTPS']) !== 'off')
+		|| (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https')
+	) {
+		$scheme = 'https';
+	}
+
+	$host = isset($_SERVER['HTTP_HOST']) ? $_SERVER['HTTP_HOST'] : '';
+	$requestUri = isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : '';
+
+	if ($host === '') {
+		return $requestUri;
+	}
+
+	return $scheme . '://' . $host . $requestUri;
+}
+
+function getClientIp()
+{
+	if (isset($_SERVER['HTTP_X_FORWARDED_FOR']) && trim($_SERVER['HTTP_X_FORWARDED_FOR']) !== '') {
+		$parts = explode(',', $_SERVER['HTTP_X_FORWARDED_FOR']);
+		return trim($parts[0]);
+	}
+
+	if (isset($_SERVER['REMOTE_ADDR'])) {
+		return $_SERVER['REMOTE_ADDR'];
+	}
+
+	return '';
 }
 
 function logMessage($level, $message, $context)
