@@ -22,6 +22,8 @@ try {
 
 	$mac = getStringValue($request, 'mac');
 	$pairs = extractDynamicPairs($request);
+	$alarmParamIds = extractAlarmParamIds($request);
+	validateAlarmParamIds($alarmParamIds, $pairs);
 
 	if ($mac === '') {
 		logMessage('warning', 'MAC no enviada.', array(
@@ -48,11 +50,12 @@ try {
 		));
 	}
 
-	$result = insertData($mac, $pairs);
+	$result = insertData($mac, $pairs, $alarmParamIds);
 	sendJson(201, array(
 		'error' => false,
 		'message' => 'Lecturas insertadas correctamente.',
 		'inserted' => $result['inserted'],
+		'alarm_inserted' => $result['alarm_inserted'],
 		'request_id' => $requestId
 	));
 } catch (InvalidArgumentException $e) {
@@ -208,7 +211,80 @@ function extractDynamicPairs($queryParams)
 	return $pairs;
 }
 
-function insertData($mac, $pairs)
+function extractAlarmParamIds($queryParams)
+{
+	$alarmValues = array();
+	foreach ($queryParams as $key => $value) {
+		if (strtolower((string)$key) === 'alarm') {
+			if (is_array($value)) {
+				foreach ($value as $item) {
+					$alarmValues[] = (string)$item;
+				}
+			} else {
+				$alarmValues[] = (string)$value;
+			}
+		}
+	}
+
+	if (getRequestMethod() === 'GET' && isset($_SERVER['QUERY_STRING'])) {
+		$parts = explode('&', $_SERVER['QUERY_STRING']);
+		foreach ($parts as $part) {
+			if ($part === '') {
+				continue;
+			}
+
+			$keyValue = explode('=', $part, 2);
+			$key = urldecode($keyValue[0]);
+			if (strtolower($key) !== 'alarm' && strtolower($key) !== 'alarm[]') {
+				continue;
+			}
+
+			$alarmValues[] = isset($keyValue[1]) ? urldecode($keyValue[1]) : '';
+		}
+	}
+
+	if (count($alarmValues) === 0) {
+		return array();
+	}
+
+	$alarmParamIds = array();
+	foreach ($alarmValues as $alarmValue) {
+		$tokens = preg_split('/[\s,;|]+/', trim((string)$alarmValue));
+		foreach ($tokens as $token) {
+			if ($token === '') {
+				continue;
+			}
+
+			if (!preg_match('/^p?(\d+)$/i', $token, $matches)) {
+				throw new InvalidArgumentException('El parametro alarm debe tener formato pXX.');
+			}
+
+			$alarmParamIds[(int)$matches[1]] = true;
+		}
+	}
+
+	return array_keys($alarmParamIds);
+}
+
+function validateAlarmParamIds($alarmParamIds, $pairs)
+{
+	if (count($alarmParamIds) === 0) {
+		return;
+	}
+
+	$receivedParamIds = array();
+	foreach ($pairs as $pair) {
+		$receivedParamIds[(int)$pair['id_param']] = true;
+	}
+
+	foreach ($alarmParamIds as $alarmParamId) {
+		if (!isset($receivedParamIds[(int)$alarmParamId])) {
+			throw new InvalidArgumentException('El parametro alarm p' . $alarmParamId . ' no existe entre las lecturas recibidas.');
+		}
+	}
+}
+
+function insertData($mac, $pairs, $alarmParamIds)
 {
 	$connectionFile = dirname(__DIR__) . '/connection.php';
 	if (!is_file($connectionFile)) {
@@ -241,10 +317,15 @@ function insertData($mac, $pairs)
 	$idSensor = (int)$sensor['id'];
 	$fecha = date('Y-m-d H:i:s');
 	$inserted = 0;
+	$alarmInserted = 0;
+	$alarmParamLookup = array_fill_keys($alarmParamIds, true);
 
 	$sqlInsert = 'INSERT INTO lectura (id, id_sensor, id_param, fecha, valor)
 		VALUES (NULL, :id_sensor, :id_param, :fecha, :valor)';
 	$stmtInsert = $con->prepare($sqlInsert);
+	$sqlInsertAlarm = 'INSERT INTO lectura_alarma (id, id_sensor, id_param, fecha, valor)
+		VALUES (NULL, :id_sensor, :id_param, :fecha, :valor)';
+	$stmtInsertAlarm = $con->prepare($sqlInsertAlarm);
 
 	try {
 		$con->beginTransaction();
@@ -256,6 +337,16 @@ function insertData($mac, $pairs)
 				':valor' => $pair['valor']
 			));
 			$inserted++;
+
+			if (isset($alarmParamLookup[(int)$pair['id_param']])) {
+				$stmtInsertAlarm->execute(array(
+					':id_sensor' => $idSensor,
+					':id_param' => $pair['id_param'],
+					':fecha' => $fecha,
+					':valor' => $pair['valor']
+				));
+				$alarmInserted++;
+			}
 		}
 		$con->commit();
 	} catch (Exception $e) {
@@ -266,7 +357,10 @@ function insertData($mac, $pairs)
 		throw $e;
 	}
 
-	return array('inserted' => $inserted);
+	return array(
+		'inserted' => $inserted,
+		'alarm_inserted' => $alarmInserted
+	);
 }
 
 function sendJson($statusCode, $payload)
